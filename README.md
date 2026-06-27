@@ -39,14 +39,24 @@ package main
 import "github.com/molang-dev/alog"
 
 func main() {
-	alog.I("Startup", "hello %s", "world")
+	alog.V("Startup", "verbose message")
+	alog.D("Startup", "debug message")
+	alog.I("Startup", "info message")
+	alog.W("Startup", "warning message")
+	alog.E("Startup", "error message")
+	alog.Fatal("Startup", "fatal message and exit")
 }
 ```
 
 Example output:
 
 ```text
-2026-06-27 13:55:34.386|I|12345|Startup|hello world
+2026-06-27 13:55:34.386|V|12345|Startup|verbose message
+2026-06-27 13:55:34.386|D|12345|Startup|debug message
+2026-06-27 13:55:34.386|I|12345|Startup|info message
+2026-06-27 13:55:34.386|W|12345|Startup|warning message
+2026-06-27 13:55:34.386|E|12345|Startup|error message
+2026-06-27 13:55:34.386|F|12345|Startup|fatal message and exit
 ```
 
 ## Logger Instances
