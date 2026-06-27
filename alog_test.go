@@ -3,6 +3,7 @@ package alog
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -147,6 +148,75 @@ func TestLoggerAppendsDateFile(t *testing.T) {
 	text := string(content)
 	if !strings.Contains(text, "first") || !strings.Contains(text, "second") {
 		t.Fatalf("log file should contain appended messages: %q", text)
+	}
+}
+
+func TestLoggerWritesDateFileInDirWithPrefix(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "logs")
+
+	log := New()
+	log.SetDir(dir)
+	log.SetFilePrefix("app-")
+	log.SetFlags(FlagFile)
+	log.I("Tag", "prefixed file")
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one log file, got %d", len(entries))
+	}
+	if !regexp.MustCompile(`^app-\d{4}-\d{2}-\d{2}\.log$`).MatchString(entries[0].Name()) {
+		t.Fatalf("unexpected log file name: %q", entries[0].Name())
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "prefixed file") {
+		t.Fatalf("log file should contain message: %q", string(content))
+	}
+}
+
+func TestLoggerChangingFilePrefixSwitchesFile(t *testing.T) {
+	dir := t.TempDir()
+
+	log := New()
+	log.SetDir(dir)
+	log.SetFilePrefix("first-")
+	log.SetFlags(FlagFile)
+	log.I("Tag", "first message")
+	log.SetFilePrefix("second-")
+	log.I("Tag", "second message")
+
+	firstFiles, err := filepath.Glob(filepath.Join(dir, "first-*.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondFiles, err := filepath.Glob(filepath.Join(dir, "second-*.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstFiles) != 1 || len(secondFiles) != 1 {
+		t.Fatalf("expected one first and one second file, got %d and %d", len(firstFiles), len(secondFiles))
+	}
+
+	firstContent, err := os.ReadFile(firstFiles[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondContent, err := os.ReadFile(secondFiles[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(firstContent), "first message") {
+		t.Fatalf("first file should contain first message: %q", string(firstContent))
+	}
+	if !strings.Contains(string(secondContent), "second message") {
+		t.Fatalf("second file should contain second message: %q", string(secondContent))
 	}
 }
 

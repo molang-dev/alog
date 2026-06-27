@@ -130,6 +130,21 @@ type Logger interface {
 	// rendered log line and do not occupy an empty "|" field.
 	SetPrefix(prefix string)
 
+	// Dir returns the directory used by FlagFile. An empty directory means the
+	// current working directory.
+	Dir() string
+
+	// SetDir changes the directory used by FlagFile. The directory is created
+	// when a file log is written.
+	SetDir(dir string)
+
+	// FilePrefix returns the prefix added before the daily file name.
+	FilePrefix() string
+
+	// SetFilePrefix changes the prefix added before the daily file name. For
+	// example, "app-" produces app-2026-06-27.log.
+	SetFilePrefix(prefix string)
+
 	// Level returns the current filtering level.
 	Level() Level
 
@@ -151,10 +166,13 @@ type logger struct {
 	output      io.Writer
 	flags       int
 	prefix      string
+	dir         string
+	filePrefix  string
 	level       Level
 	callerLevel Level
 	callerFlags CallerFlag
 	fileDate    string
+	filePath    string
 	file        *os.File
 	times       map[uint32]time.Time
 	nextTimeID  uint32
@@ -233,6 +251,27 @@ func Prefix() string {
 // SetPrefix changes the optional prefix of the package-level default logger.
 func SetPrefix(prefix string) {
 	std.SetPrefix(prefix)
+}
+
+// Dir returns the file output directory of the package-level default logger.
+func Dir() string {
+	return std.Dir()
+}
+
+// SetDir changes the file output directory of the package-level default logger.
+func SetDir(dir string) {
+	std.SetDir(dir)
+}
+
+// FilePrefix returns the daily file prefix of the package-level default logger.
+func FilePrefix() string {
+	return std.FilePrefix()
+}
+
+// SetFilePrefix changes the daily file prefix of the package-level default
+// logger.
+func SetFilePrefix(prefix string) {
+	std.SetFilePrefix(prefix)
 }
 
 // GetLevel returns the filtering level of the package-level default logger.
@@ -363,6 +402,34 @@ func (l *logger) SetPrefix(prefix string) {
 	l.mu.Unlock()
 }
 
+func (l *logger) Dir() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.dir
+}
+
+func (l *logger) SetDir(dir string) {
+	l.mu.Lock()
+	l.dir = dir
+	l.closeFileLocked()
+	l.mu.Unlock()
+}
+
+func (l *logger) FilePrefix() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.filePrefix
+}
+
+func (l *logger) SetFilePrefix(prefix string) {
+	l.mu.Lock()
+	l.filePrefix = prefix
+	l.closeFileLocked()
+	l.mu.Unlock()
+}
+
 func (l *logger) Level() Level {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -461,23 +528,46 @@ func (l *logger) callerFields(level Level) []string {
 
 func (l *logger) openFileLocked(now time.Time) *os.File {
 	date := now.Format(dateLayout)
-	if l.file != nil && l.fileDate == date {
+	path := l.filePathForDate(date)
+	if l.file != nil && l.fileDate == date && l.filePath == path {
 		return l.file
 	}
 
-	if l.file != nil {
-		_ = l.file.Close()
-		l.file = nil
+	l.closeFileLocked()
+
+	if l.dir != "" {
+		if err := os.MkdirAll(l.dir, 0o755); err != nil {
+			return nil
+		}
 	}
 
-	file, err := os.OpenFile(date+".log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil
 	}
 
 	l.file = file
 	l.fileDate = date
+	l.filePath = path
 	return file
+}
+
+func (l *logger) filePathForDate(date string) string {
+	name := l.filePrefix + date + ".log"
+	if l.dir == "" {
+		return name
+	}
+
+	return filepath.Join(l.dir, name)
+}
+
+func (l *logger) closeFileLocked() {
+	if l.file != nil {
+		_ = l.file.Close()
+		l.file = nil
+	}
+	l.fileDate = ""
+	l.filePath = ""
 }
 
 func (l *logger) writeStack() {
