@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -58,10 +59,30 @@ const (
 	FlagColor
 )
 
+// CallerFlag controls which caller fields can be added to a log line.
+//
+// Caller fields are disabled by default because they require runtime.Caller.
+// Use SetCallerFlags to enable them only at or above a chosen level.
+type CallerFlag int
+
+const (
+	// FlagShortFile adds the caller file base name and line, for example
+	// main.go:23.
+	FlagShortFile CallerFlag = 1 << iota
+
+	// FlagLongFile adds the caller full file path and line, for example
+	// /app/main.go:23.
+	FlagLongFile
+
+	// FlagFunc adds the caller function name, for example main.main.
+	FlagFunc
+)
+
 const (
 	defaultFlags = FlagScreen | FlagColor
 	timeLayout   = "2006-01-02 15:04:05.000"
 	dateLayout   = "2006-01-02"
+	callerSkip   = 4
 )
 
 // Logger is the public logging interface implemented by loggers created with
@@ -114,6 +135,15 @@ type Logger interface {
 
 	// SetLevel changes the filtering level.
 	SetLevel(level Level)
+
+	// CallerFlags returns the minimum level and caller flags configured by
+	// SetCallerFlags.
+	CallerFlags() (Level, CallerFlag)
+
+	// SetCallerFlags enables caller fields for logs at level or above. For
+	// example, SetCallerFlags(LevelWarning, FlagShortFile) adds caller fields to
+	// warning, error, and fatal logs only.
+	SetCallerFlags(level Level, flags CallerFlag)
 }
 
 type logger struct {
@@ -122,7 +152,8 @@ type logger struct {
 	flags       int
 	prefix      string
 	level       Level
-	packageName string
+	callerLevel Level
+	callerFlags CallerFlag
 	fileDate    string
 	file        *os.File
 	times       map[uint32]time.Time
@@ -138,33 +169,35 @@ func New() Logger {
 
 // V writes a verbose log with the package-level default logger.
 func V(tag string, format string, msg ...any) {
-	std.V(tag, format, msg...)
+	std.log(LevelVerbose, tag, format, msg...)
 }
 
 // D writes a debug log with the package-level default logger.
 func D(tag string, format string, msg ...any) {
-	std.D(tag, format, msg...)
+	std.log(LevelDebug, tag, format, msg...)
 }
 
 // I writes an info log with the package-level default logger.
 func I(tag string, format string, msg ...any) {
-	std.I(tag, format, msg...)
+	std.log(LevelInfo, tag, format, msg...)
 }
 
 // W writes a warning log with the package-level default logger.
 func W(tag string, format string, msg ...any) {
-	std.W(tag, format, msg...)
+	std.log(LevelWarning, tag, format, msg...)
 }
 
 // E writes an error log with the package-level default logger.
 func E(tag string, format string, msg ...any) {
-	std.E(tag, format, msg...)
+	std.log(LevelError, tag, format, msg...)
 }
 
 // Fatal writes a fatal log with the package-level default logger, writes the
 // current stack, and exits the process with status code 1.
 func Fatal(tag string, format string, msg ...any) {
-	std.Fatal(tag, format, msg...)
+	std.log(LevelFatal, tag, format, msg...)
+	std.writeStack()
+	os.Exit(1)
 }
 
 // Time records a start time with the package-level default logger.
@@ -215,12 +248,24 @@ func SetLevel(level Level) {
 	std.SetLevel(level)
 }
 
+// CallerFlags returns the caller configuration of the package-level default
+// logger.
+func CallerFlags() (Level, CallerFlag) {
+	return std.CallerFlags()
+}
+
+// SetCallerFlags changes the caller configuration of the package-level default
+// logger.
+func SetCallerFlags(level Level, flags CallerFlag) {
+	std.SetCallerFlags(level, flags)
+}
+
 func newLogger() *logger {
 	return &logger{
 		output:      os.Stdout,
 		flags:       defaultFlags,
 		level:       LevelVerbose,
-		packageName: filepath.Base(os.Args[0]),
+		callerLevel: LevelFatal,
 		times:       make(map[uint32]time.Time),
 	}
 }
@@ -331,6 +376,20 @@ func (l *logger) SetLevel(level Level) {
 	l.mu.Unlock()
 }
 
+func (l *logger) CallerFlags() (Level, CallerFlag) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.callerLevel, l.callerFlags
+}
+
+func (l *logger) SetCallerFlags(level Level, flags CallerFlag) {
+	l.mu.Lock()
+	l.callerLevel = level
+	l.callerFlags = flags
+	l.mu.Unlock()
+}
+
 func (l *logger) log(level Level, tag string, format string, msg ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -358,6 +417,7 @@ func (l *logger) formatLine(level Level, tag string, format string, msg ...any) 
 	now := time.Now().Format(timeLayout)
 	message := fmt.Sprintf(format, msg...)
 	pid := fmt.Sprintf("%d", os.Getpid())
+	callerFields := l.callerFields(level)
 
 	parts := []string{now, level.letter(), pid}
 	if l.prefix != "" {
@@ -366,14 +426,37 @@ func (l *logger) formatLine(level Level, tag string, format string, msg ...any) 
 	if tag != "" {
 		parts = append(parts, tag)
 	}
-	if l.packageName != "" {
-		parts = append(parts, l.packageName)
-	}
+	parts = append(parts, callerFields...)
 	if message != "" {
 		parts = append(parts, message)
 	}
 
 	return strings.Join(parts, "|")
+}
+
+func (l *logger) callerFields(level Level) []string {
+	if l.callerFlags == 0 || level < l.callerLevel {
+		return nil
+	}
+
+	pc, file, line, ok := runtime.Caller(callerSkip)
+	if !ok {
+		return nil
+	}
+
+	fields := make([]string, 0, 2)
+	if l.callerFlags&FlagLongFile != 0 {
+		fields = append(fields, fmt.Sprintf("%s:%d", file, line))
+	} else if l.callerFlags&FlagShortFile != 0 {
+		fields = append(fields, fmt.Sprintf("%s:%d", filepath.Base(file), line))
+	}
+	if l.callerFlags&FlagFunc != 0 {
+		if fn := runtime.FuncForPC(pc); fn != nil {
+			fields = append(fields, fn.Name())
+		}
+	}
+
+	return fields
 }
 
 func (l *logger) openFileLocked(now time.Time) *os.File {

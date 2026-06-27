@@ -3,7 +3,6 @@ package alog
 import (
 	"bytes"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -17,7 +16,7 @@ func TestLoggerFormatSkipsEmptyPrefix(t *testing.T) {
 	log.I("Tag", "hello %s", "world")
 
 	line := strings.TrimSpace(out.String())
-	pattern := `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\|I\|\d+\|Tag\|` + regexp.QuoteMeta(filepath.Base(os.Args[0]))
+	pattern := `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\|I\|\d+\|Tag\|hello world$`
 	if !regexp.MustCompile(pattern).MatchString(line) {
 		t.Fatalf("unexpected line: %q", line)
 	}
@@ -148,5 +147,43 @@ func TestLoggerAppendsDateFile(t *testing.T) {
 	text := string(content)
 	if !strings.Contains(text, "first") || !strings.Contains(text, "second") {
 		t.Fatalf("log file should contain appended messages: %q", text)
+	}
+}
+
+func TestLoggerCallerFlagsStartAtConfiguredLevel(t *testing.T) {
+	var out bytes.Buffer
+	log := New()
+	log.SetOutput(&out)
+	log.SetFlags(FlagScreen)
+	log.SetCallerFlags(LevelWarning, FlagShortFile|FlagFunc)
+
+	log.I("Tag", "info")
+	infoLine := strings.TrimSpace(out.String())
+	if strings.Contains(infoLine, "alog_test.go:") || strings.Contains(infoLine, "TestLoggerCallerFlagsStartAtConfiguredLevel") {
+		t.Fatalf("info log should not include caller fields: %q", infoLine)
+	}
+
+	out.Reset()
+	log.W("Tag", "warn")
+	warnLine := strings.TrimSpace(out.String())
+	if !strings.Contains(warnLine, "alog_test.go:") {
+		t.Fatalf("warning log should include short file: %q", warnLine)
+	}
+	if !strings.Contains(warnLine, "TestLoggerCallerFlagsStartAtConfiguredLevel") {
+		t.Fatalf("warning log should include function name: %q", warnLine)
+	}
+}
+
+func TestLoggerLongFileWinsOverShortFile(t *testing.T) {
+	var out bytes.Buffer
+	log := New()
+	log.SetOutput(&out)
+	log.SetFlags(FlagScreen)
+	log.SetCallerFlags(LevelVerbose, FlagShortFile|FlagLongFile)
+	log.V("Tag", "verbose")
+
+	line := strings.TrimSpace(out.String())
+	if !regexp.MustCompile(`/alog_test\.go:\d+`).MatchString(line) {
+		t.Fatalf("log should include long file path: %q", line)
 	}
 }

@@ -13,6 +13,7 @@ package-level helper functions, and independent logger instances.
   the logger closes the old file and opens the new date file.
 - Console and file output can be enabled at the same time.
 - Empty optional fields are omitted and do not produce empty `|` columns.
+- Optional caller fields can be enabled only at or above a configured level.
 - Package-level helpers such as `alog.I(...)`.
 - Independent logger instances through `alog.New()`.
 - ANSI colors for console output:
@@ -43,7 +44,7 @@ func main() {
 Example output:
 
 ```text
-2026-06-27 13:55:34.386|I|12345|Startup|myapp|hello world
+2026-06-27 13:55:34.386|I|12345|Startup|hello world
 ```
 
 ## Logger Instances
@@ -60,7 +61,7 @@ logger.D("Sync", "loaded %d items", 10)
 With a prefix, output looks like:
 
 ```text
-2026-06-27 13:55:34.386|D|12345|Worker|Sync|myapp|loaded 10 items
+2026-06-27 13:55:34.386|D|12345|Worker|Sync|loaded 10 items
 ```
 
 ## Output Flags
@@ -107,17 +108,58 @@ new file after midnight.
 
 ## Format
 
-The full format is:
+The default format is:
 
 ```text
-YYYY-MM-DD HH:mm:ss.SSS|Level|PID(TID)|Prefix|Tag|PackageName|Message
+YYYY-MM-DD HH:mm:ss.SSS|Level|PID(TID)|Prefix|Tag|Message
 ```
 
-`TID` and `Prefix` are optional. When an optional field is empty, it is omitted
-and does not reserve a `|` column.
+`TID`, `Prefix`, and caller fields are optional. When an optional field is
+empty, it is omitted and does not reserve a `|` column.
 
 The current implementation does not emit `TID`, so the process field is printed
 as `PID`.
+
+When caller fields are enabled, they are inserted after `Tag` and before
+`Message`:
+
+```text
+YYYY-MM-DD HH:mm:ss.SSS|Level|PID|Prefix|Tag|File:Line|Func|Message
+```
+
+## Caller Fields
+
+Caller fields are disabled by default because they use `runtime.Caller`.
+
+Use `SetCallerFlags` to enable caller fields at or above a minimum level:
+
+```go
+logger := alog.New()
+logger.SetCallerFlags(alog.LevelWarning, alog.FlagShortFile|alog.FlagFunc)
+```
+
+With this configuration, verbose, debug, and info logs do not include caller
+fields. Warning, error, and fatal logs include them:
+
+```text
+2026-06-27 13:55:34.386|W|12345|Sync|main.go:23|main.main|slow response
+```
+
+Available caller flags:
+
+- `alog.FlagShortFile`: add the caller file base name and line, such as
+  `main.go:23`.
+- `alog.FlagLongFile`: add the caller full file path and line, such as
+  `/app/main.go:23`.
+- `alog.FlagFunc`: add the caller function name, such as `main.main`.
+
+If `FlagShortFile` and `FlagLongFile` are both set, `FlagLongFile` is used.
+
+The package-level default logger also supports caller configuration:
+
+```go
+alog.SetCallerFlags(alog.LevelError, alog.FlagLongFile|alog.FlagFunc)
+```
 
 ## Levels
 
