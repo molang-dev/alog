@@ -551,8 +551,12 @@ func (l *logger) formatJSONLine(now string, level string, pid int, tag string, c
 		b.WriteString(quoteJSON(caller.fn))
 	}
 	if message != "" {
-		b.WriteString(`,"message":`)
-		b.WriteString(quoteJSON(message))
+		b.WriteString(`,"msg":`)
+		if isJSONValue(message) {
+			b.WriteString(message)
+		} else {
+			b.WriteString(quoteJSON(message))
+		}
 	}
 	if stack != "" {
 		b.WriteString(`,"stack":`)
@@ -564,6 +568,41 @@ func (l *logger) formatJSONLine(now string, level string, pid int, tag string, c
 
 func quoteJSON(s string) string {
 	return string(strconv.AppendQuote(nil, s))
+}
+
+func isJSONValue(s string) bool {
+	start := 0
+	for start < len(s) && isJSONSpace(s[start]) {
+		start++
+	}
+	if start >= len(s) {
+		return false
+	}
+
+	end := len(s) - 1
+	for end > start && isJSONSpace(s[end]) {
+		end--
+	}
+
+	switch s[start] {
+	case '{':
+		if s[end] != '}' {
+			return false
+		}
+		next := start + 1
+		for next < end && isJSONSpace(s[next]) {
+			next++
+		}
+		return next < end && s[next] == '"'
+	case '[':
+		return s[end] == ']'
+	default:
+		return false
+	}
+}
+
+func isJSONSpace(c byte) bool {
+	return c == ' ' || c == '\n' || c == '\r' || c == '\t'
 }
 
 func (l *logger) callerInfo(level Level) callerInfo {

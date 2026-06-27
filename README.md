@@ -191,19 +191,36 @@ This lets the screen stay human-readable while files use JSON for ingestion.
 JSON output is one object per line:
 
 ```json
-{"time":"2026-06-27 13:55:34.386","level":"I","pid":12345,"tag":"Startup","message":"hello world"}
+{"time":"2026-06-27 13:55:34.386","level":"I","pid":12345,"tag":"Startup","msg":"hello world"}
 ```
 
 Empty fields are omitted from JSON. When caller fields are enabled, JSON logs
 can include `file` and `func`:
 
 ```json
-{"time":"2026-06-27 13:55:34.386","level":"W","pid":12345,"tag":"Sync","file":"main.go:23","func":"main.main","message":"slow response"}
+{"time":"2026-06-27 13:55:34.386","level":"W","pid":12345,"tag":"Sync","file":"main.go:23","func":"main.main","msg":"slow response"}
 ```
 
 JSON rendering is built by direct string writing and does not use
 `encoding/json` or struct tags. String fields that can contain special
 characters are escaped before output.
+
+If the message starts with a JSON object or array after leading whitespace and
+ends with the matching closing character before trailing whitespace, it is
+written as raw JSON:
+
+```go
+logger.I("Price", ` { "price": "123" } `)
+logger.I("Prices", ` [ {"price": "123"} ] `)
+```
+
+```json
+{"time":"2026-06-27 13:55:34.386","level":"I","pid":12345,"tag":"Price","msg": { "price": "123" } }
+{"time":"2026-06-27 13:55:34.386","level":"I","pid":12345,"tag":"Prices","msg": [ {"price": "123"} ] }
+```
+
+Only the outer shape is checked. Invalid raw JSON remains the caller's
+responsibility.
 
 `FlagColor` only affects text screen output. JSON output is never wrapped in
 ANSI color codes.

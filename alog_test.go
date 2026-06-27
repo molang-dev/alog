@@ -259,7 +259,7 @@ func TestLoggerJSONFormat(t *testing.T) {
 	if !strings.Contains(line, `,"tag":"Ta\"g"`) {
 		t.Fatalf("json should quote tag: %q", line)
 	}
-	if !strings.Contains(line, `,"message":"hello wo\nrld"`) {
+	if !strings.Contains(line, `,"msg":"hello wo\nrld"`) {
 		t.Fatalf("json should quote message: %q", line)
 	}
 	if strings.Contains(line, "\033[") {
@@ -313,7 +313,35 @@ func TestLoggerScreenAndFileFormatsCanDiffer(t *testing.T) {
 		t.Fatal(err)
 	}
 	file := strings.TrimSpace(string(content))
-	if !strings.HasPrefix(file, `{"time":"`) || !strings.Contains(file, `,"message":"mixed"`) {
+	if !strings.HasPrefix(file, `{"time":"`) || !strings.Contains(file, `,"msg":"mixed"`) {
 		t.Fatalf("file should use json format: %q", file)
+	}
+}
+
+func TestLoggerJSONRawMessage(t *testing.T) {
+	var out bytes.Buffer
+	log := New()
+	log.SetOutput(&out)
+	log.SetFlags(FlagScreen)
+	log.SetFormat(FormatJSON, FormatJSON)
+	log.I("Tag", ` { "price": "123" } `)
+
+	line := strings.TrimSpace(out.String())
+	if !strings.Contains(line, `,"msg": { "price": "123" } `) {
+		t.Fatalf("json object message should be raw: %q", line)
+	}
+
+	out.Reset()
+	log.I("Tag", ` [ {"price": "123"} ] `)
+	line = strings.TrimSpace(out.String())
+	if !strings.Contains(line, `,"msg": [ {"price": "123"} ] `) {
+		t.Fatalf("json array message should be raw: %q", line)
+	}
+
+	out.Reset()
+	log.I("Tag", `{bad}`)
+	line = strings.TrimSpace(out.String())
+	if !strings.Contains(line, `,"msg":"{bad}"`) {
+		t.Fatalf("invalid object-looking message should be quoted: %q", line)
 	}
 }
