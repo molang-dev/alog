@@ -240,3 +240,80 @@ func TestLoggerLongFileWinsOverShortFile(t *testing.T) {
 		t.Fatalf("log should include long file path: %q", line)
 	}
 }
+
+func TestLoggerJSONFormat(t *testing.T) {
+	var out bytes.Buffer
+	log := New()
+	log.SetOutput(&out)
+	log.SetFlags(FlagScreen | FlagColor)
+	log.SetFormat(FormatJSON, FormatJSON)
+	log.I(`Ta"g`, "hello %s", "wo\nrld")
+
+	line := strings.TrimSpace(out.String())
+	if !strings.HasPrefix(line, `{"time":"`) {
+		t.Fatalf("json should start with time field: %q", line)
+	}
+	if !strings.Contains(line, `","level":"I","pid":`) {
+		t.Fatalf("json should contain level and pid: %q", line)
+	}
+	if !strings.Contains(line, `,"tag":"Ta\"g"`) {
+		t.Fatalf("json should quote tag: %q", line)
+	}
+	if !strings.Contains(line, `,"message":"hello wo\nrld"`) {
+		t.Fatalf("json should quote message: %q", line)
+	}
+	if strings.Contains(line, "\033[") {
+		t.Fatalf("json output should not include ansi color codes: %q", line)
+	}
+}
+
+func TestLoggerJSONCallerFields(t *testing.T) {
+	var out bytes.Buffer
+	log := New()
+	log.SetOutput(&out)
+	log.SetFlags(FlagScreen)
+	log.SetFormat(FormatJSON, FormatJSON)
+	log.SetCallerFlags(LevelWarning, FlagShortFile|FlagFunc)
+	log.W("Tag", "warn")
+
+	line := strings.TrimSpace(out.String())
+	if !regexp.MustCompile(`"file":"alog_test\.go:\d+"`).MatchString(line) {
+		t.Fatalf("json should include short file: %q", line)
+	}
+	if !strings.Contains(line, `"func":"github.com/molang-dev/alog.TestLoggerJSONCallerFields"`) {
+		t.Fatalf("json should include function name: %q", line)
+	}
+}
+
+func TestLoggerScreenAndFileFormatsCanDiffer(t *testing.T) {
+	var out bytes.Buffer
+	dir := t.TempDir()
+	log := New()
+	log.SetOutput(&out)
+	log.SetDir(dir)
+	log.SetFlags(FlagScreen | FlagFile)
+	log.SetFormat(FormatText, FormatJSON)
+	log.I("Tag", "mixed")
+
+	screen := strings.TrimSpace(out.String())
+	if !strings.Contains(screen, "|I|") || strings.HasPrefix(screen, "{") {
+		t.Fatalf("screen should use text format: %q", screen)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one log file, got %d", len(entries))
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := strings.TrimSpace(string(content))
+	if !strings.HasPrefix(file, `{"time":"`) || !strings.Contains(file, `,"message":"mixed"`) {
+		t.Fatalf("file should use json format: %q", file)
+	}
+}

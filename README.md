@@ -14,6 +14,7 @@ package-level helper functions, and independent logger instances.
 - The active log file is checked on every print; when the local date changes,
   the logger closes the old file and opens the new date file.
 - Console and file output can be enabled at the same time.
+- Text and JSON output formats.
 - Empty optional fields are omitted and do not produce empty `|` columns.
 - Optional caller fields can be enabled only at or above a configured level.
 - Package-level helpers such as `alog.I(...)`.
@@ -157,7 +158,7 @@ opens the new target and continues appending if that file already exists.
 
 ## Format
 
-The default format is:
+The default format is text:
 
 ```text
 YYYY-MM-DD HH:mm:ss.SSS|Level|PID(TID)|Tag|Message
@@ -175,6 +176,37 @@ When caller fields are enabled, they are inserted after `Tag` and before
 ```text
 YYYY-MM-DD HH:mm:ss.SSS|Level|PID|Tag|File:Line|Func|Message
 ```
+
+Switch formats with `SetFormat(screen, file)`:
+
+```go
+logger := alog.New()
+logger.SetFormat(alog.FormatText, alog.FormatJSON)
+logger.I("Startup", "hello %s", "world")
+```
+
+The first argument controls screen output, and the second controls file output.
+This lets the screen stay human-readable while files use JSON for ingestion.
+
+JSON output is one object per line:
+
+```json
+{"time":"2026-06-27 13:55:34.386","level":"I","pid":12345,"tag":"Startup","message":"hello world"}
+```
+
+Empty fields are omitted from JSON. When caller fields are enabled, JSON logs
+can include `file` and `func`:
+
+```json
+{"time":"2026-06-27 13:55:34.386","level":"W","pid":12345,"tag":"Sync","file":"main.go:23","func":"main.main","message":"slow response"}
+```
+
+JSON rendering is built by direct string writing and does not use
+`encoding/json` or struct tags. String fields that can contain special
+characters are escaped before output.
+
+`FlagColor` only affects text screen output. JSON output is never wrapped in
+ANSI color codes.
 
 ## Caller Fields
 

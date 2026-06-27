@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -78,6 +79,17 @@ const (
 	FlagFunc
 )
 
+// LogFormat controls how log entries are rendered.
+type LogFormat int
+
+const (
+	// FormatText renders logs as pipe-separated text.
+	FormatText LogFormat = iota
+
+	// FormatJSON renders logs as one JSON object per line.
+	FormatJSON
+)
+
 const (
 	defaultFlags = FlagScreen | FlagColor
 	timeLayout   = "2006-01-02 15:04:05.000"
@@ -123,6 +135,12 @@ type Logger interface {
 	// SetFlags replaces the current output flags.
 	SetFlags(flag int)
 
+	// Format returns the screen and file log output formats.
+	Format() (screen LogFormat, file LogFormat)
+
+	// SetFormat changes the screen and file log output formats.
+	SetFormat(screen LogFormat, file LogFormat)
+
 	// Dir returns the directory used by FlagFile. An empty directory means the
 	// current working directory.
 	Dir() string
@@ -155,20 +173,27 @@ type Logger interface {
 }
 
 type logger struct {
-	mu          sync.Mutex
-	output      io.Writer
-	flags       int
-	dir         string
-	filePrefix  string
-	level       Level
-	callerLevel Level
-	callerFlags CallerFlag
-	fileYear    int
-	fileDay     int
-	filePath    string
-	file        *os.File
-	times       map[uint32]time.Time
-	nextTimeID  uint32
+	mu           sync.Mutex
+	output       io.Writer
+	flags        int
+	screenFormat LogFormat
+	fileFormat   LogFormat
+	dir          string
+	filePrefix   string
+	level        Level
+	callerLevel  Level
+	callerFlags  CallerFlag
+	fileYear     int
+	fileDay      int
+	filePath     string
+	file         *os.File
+	times        map[uint32]time.Time
+	nextTimeID   uint32
+}
+
+type callerInfo struct {
+	file string
+	fn   string
 }
 
 var std = newLogger()
@@ -236,6 +261,18 @@ func SetFlags(flag int) {
 	std.SetFlags(flag)
 }
 
+// Format returns the screen and file log output formats of the package-level
+// default logger.
+func Format() (screen LogFormat, file LogFormat) {
+	return std.Format()
+}
+
+// SetFormat changes the screen and file log output formats of the package-level
+// default logger.
+func SetFormat(screen LogFormat, file LogFormat) {
+	std.SetFormat(screen, file)
+}
+
 // Dir returns the file output directory of the package-level default logger.
 func Dir() string {
 	return std.Dir()
@@ -284,11 +321,13 @@ func SetCallerFlags(level Level, flags CallerFlag) {
 
 func newLogger() *logger {
 	return &logger{
-		output:      os.Stdout,
-		flags:       defaultFlags,
-		level:       LevelVerbose,
-		callerLevel: LevelFatal,
-		times:       make(map[uint32]time.Time),
+		output:       os.Stdout,
+		flags:        defaultFlags,
+		screenFormat: FormatText,
+		fileFormat:   FormatText,
+		level:        LevelVerbose,
+		callerLevel:  LevelFatal,
+		times:        make(map[uint32]time.Time),
 	}
 }
 
@@ -372,6 +411,20 @@ func (l *logger) SetFlags(flag int) {
 	l.mu.Unlock()
 }
 
+func (l *logger) Format() (LogFormat, LogFormat) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.screenFormat, l.fileFormat
+}
+
+func (l *logger) SetFormat(screen LogFormat, file LogFormat) {
+	l.mu.Lock()
+	l.screenFormat = screen
+	l.fileFormat = file
+	l.mu.Unlock()
+}
+
 func (l *logger) Dir() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -435,9 +488,9 @@ func (l *logger) log(level Level, tag string, format string, msg ...any) {
 		return
 	}
 
-	line := l.formatLine(level, tag, format, msg...)
 	if l.flags&FlagScreen != 0 {
-		if l.flags&FlagColor != 0 {
+		line := l.formatLine(level, tag, format, l.screenFormat, msg...)
+		if l.screenFormat == FormatText && l.flags&FlagColor != 0 {
 			_, _ = fmt.Fprintln(l.output, level.color()+line+"\033[0m")
 		} else {
 			_, _ = fmt.Fprintln(l.output, line)
@@ -445,22 +498,31 @@ func (l *logger) log(level Level, tag string, format string, msg ...any) {
 	}
 	if l.flags&FlagFile != 0 {
 		if file := l.openFileLocked(time.Now()); file != nil {
+			line := l.formatLine(level, tag, format, l.fileFormat, msg...)
 			_, _ = fmt.Fprintln(file, line)
 		}
 	}
 }
 
-func (l *logger) formatLine(level Level, tag string, format string, msg ...any) string {
+func (l *logger) formatLine(level Level, tag string, format string, outputFormat LogFormat, msg ...any) string {
 	now := time.Now().Format(timeLayout)
 	message := fmt.Sprintf(format, msg...)
 	pid := fmt.Sprintf("%d", os.Getpid())
-	callerFields := l.callerFields(level)
+	caller := l.callerInfo(level)
+	if outputFormat == FormatJSON {
+		return l.formatJSONLine(now, level.letter(), os.Getpid(), tag, caller, message, "")
+	}
 
 	parts := []string{now, level.letter(), pid}
 	if tag != "" {
 		parts = append(parts, tag)
 	}
-	parts = append(parts, callerFields...)
+	if caller.file != "" {
+		parts = append(parts, caller.file)
+	}
+	if caller.fn != "" {
+		parts = append(parts, caller.fn)
+	}
 	if message != "" {
 		parts = append(parts, message)
 	}
@@ -468,29 +530,65 @@ func (l *logger) formatLine(level Level, tag string, format string, msg ...any) 
 	return strings.Join(parts, "|")
 }
 
-func (l *logger) callerFields(level Level) []string {
+func (l *logger) formatJSONLine(now string, level string, pid int, tag string, caller callerInfo, message string, stack string) string {
+	var b strings.Builder
+	b.WriteString(`{"time":"`)
+	b.WriteString(now)
+	b.WriteString(`","level":"`)
+	b.WriteString(level)
+	b.WriteString(`","pid":`)
+	b.WriteString(strconv.Itoa(pid))
+	if tag != "" {
+		b.WriteString(`,"tag":`)
+		b.WriteString(quoteJSON(tag))
+	}
+	if caller.file != "" {
+		b.WriteString(`,"file":`)
+		b.WriteString(quoteJSON(caller.file))
+	}
+	if caller.fn != "" {
+		b.WriteString(`,"func":`)
+		b.WriteString(quoteJSON(caller.fn))
+	}
+	if message != "" {
+		b.WriteString(`,"message":`)
+		b.WriteString(quoteJSON(message))
+	}
+	if stack != "" {
+		b.WriteString(`,"stack":`)
+		b.WriteString(quoteJSON(stack))
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
+func quoteJSON(s string) string {
+	return string(strconv.AppendQuote(nil, s))
+}
+
+func (l *logger) callerInfo(level Level) callerInfo {
 	if l.callerFlags == 0 || level < l.callerLevel {
-		return nil
+		return callerInfo{}
 	}
 
 	pc, file, line, ok := runtime.Caller(callerSkip)
 	if !ok {
-		return nil
+		return callerInfo{}
 	}
 
-	fields := make([]string, 0, 2)
+	info := callerInfo{}
 	if l.callerFlags&FlagLongFile != 0 {
-		fields = append(fields, fmt.Sprintf("%s:%d", file, line))
+		info.file = fmt.Sprintf("%s:%d", file, line)
 	} else if l.callerFlags&FlagShortFile != 0 {
-		fields = append(fields, fmt.Sprintf("%s:%d", filepath.Base(file), line))
+		info.file = fmt.Sprintf("%s:%d", filepath.Base(file), line)
 	}
 	if l.callerFlags&FlagFunc != 0 {
 		if fn := runtime.FuncForPC(pc); fn != nil {
-			fields = append(fields, fn.Name())
+			info.fn = fn.Name()
 		}
 	}
 
-	return fields
+	return info
 }
 
 func (l *logger) openFileLocked(now time.Time) *os.File {
@@ -546,15 +644,23 @@ func (l *logger) writeStack() {
 
 	stack := strings.TrimRight(string(debug.Stack()), "\n")
 	if l.flags&FlagScreen != 0 {
-		if l.flags&FlagColor != 0 {
-			_, _ = fmt.Fprintln(l.output, LevelFatal.color()+stack+"\033[0m")
+		line := stack
+		if l.screenFormat == FormatJSON {
+			line = l.formatJSONLine(time.Now().Format(timeLayout), LevelFatal.letter(), os.Getpid(), "", callerInfo{}, "", stack)
+		}
+		if l.screenFormat == FormatText && l.flags&FlagColor != 0 {
+			_, _ = fmt.Fprintln(l.output, LevelFatal.color()+line+"\033[0m")
 		} else {
-			_, _ = fmt.Fprintln(l.output, stack)
+			_, _ = fmt.Fprintln(l.output, line)
 		}
 	}
 	if l.flags&FlagFile != 0 {
 		if file := l.openFileLocked(time.Now()); file != nil {
-			_, _ = fmt.Fprintln(file, stack)
+			line := stack
+			if l.fileFormat == FormatJSON {
+				line = l.formatJSONLine(time.Now().Format(timeLayout), LevelFatal.letter(), os.Getpid(), "", callerInfo{}, "", stack)
+			}
+			_, _ = fmt.Fprintln(file, line)
 		}
 	}
 }
