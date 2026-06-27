@@ -50,12 +50,7 @@ func main() {
 
 Example output:
 
-<span style="color: white">2026-06-27 13:55:34.386|V|12345|Startup|verbose message</span><br>
-<span style="color: blue">2026-06-27 13:55:34.386|D|12345|Startup|debug message</span><br>
-<span style="color: green">2026-06-27 13:55:34.386|I|12345|Startup|info message</span><br>
-<span style="color: goldenrod">2026-06-27 13:55:34.386|W|12345|Startup|warning message</span><br>
-<span style="color: red">2026-06-27 13:55:34.386|E|12345|Startup|error message</span><br>
-<span style="color: red">2026-06-27 13:55:34.386|F|12345|Startup|fatal message and exit</span>
+![Colored example output](docs/example-output.svg)
 
 ## Logger Instances
 
