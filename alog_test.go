@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestLoggerFormatSkipsEmptyPrefix(t *testing.T) {
+func TestLoggerFormat(t *testing.T) {
 	var out bytes.Buffer
 	log := New()
 	log.SetOutput(&out)
@@ -23,23 +23,6 @@ func TestLoggerFormatSkipsEmptyPrefix(t *testing.T) {
 	}
 	if strings.Contains(line, "||") {
 		t.Fatalf("line contains empty field separator: %q", line)
-	}
-}
-
-func TestLoggerFormatIncludesPrefix(t *testing.T) {
-	var out bytes.Buffer
-	log := New()
-	log.SetOutput(&out)
-	log.SetFlags(FlagScreen)
-	log.SetPrefix("Prefix")
-	log.W("Tag", "message")
-
-	line := strings.TrimSpace(out.String())
-	if !strings.Contains(line, "|W|") {
-		t.Fatalf("missing level: %q", line)
-	}
-	if !strings.Contains(line, "|Prefix|Tag|") {
-		t.Fatalf("missing prefix and tag: %q", line)
 	}
 }
 

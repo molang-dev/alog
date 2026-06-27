@@ -63,15 +63,14 @@ Use `alog.New()` when you want a logger with independent configuration.
 
 ```go
 logger := alog.New()
-logger.SetPrefix("Worker")
 logger.SetLevel(alog.LevelDebug)
 logger.D("Sync", "loaded %d items", 10)
 ```
 
-With a prefix, output looks like:
+Output looks like:
 
 ```text
-2026-06-27 13:55:34.386|D|12345|Worker|Sync|loaded 10 items
+2026-06-27 13:55:34.386|D|12345|Sync|loaded 10 items
 ```
 
 ## Output Flags
@@ -166,11 +165,11 @@ opens the new target and continues appending if that file already exists.
 The default format is:
 
 ```text
-YYYY-MM-DD HH:mm:ss.SSS|Level|PID(TID)|Prefix|Tag|Message
+YYYY-MM-DD HH:mm:ss.SSS|Level|PID(TID)|Tag|Message
 ```
 
-`TID`, `Prefix`, and caller fields are optional. When an optional field is
-empty, it is omitted and does not reserve a `|` column.
+`TID` and caller fields are optional. When an optional field is empty, it is
+omitted and does not reserve a `|` column.
 
 The current implementation does not emit `TID`, so the process field is printed
 as `PID`.
@@ -179,7 +178,7 @@ When caller fields are enabled, they are inserted after `Tag` and before
 `Message`:
 
 ```text
-YYYY-MM-DD HH:mm:ss.SSS|Level|PID|Prefix|Tag|File:Line|Func|Message
+YYYY-MM-DD HH:mm:ss.SSS|Level|PID|Tag|File:Line|Func|Message
 ```
 
 ## Caller Fields

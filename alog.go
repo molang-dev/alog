@@ -123,13 +123,6 @@ type Logger interface {
 	// SetFlags replaces the current output flags.
 	SetFlags(flag int)
 
-	// Prefix returns the current optional prefix.
-	Prefix() string
-
-	// SetPrefix changes the optional prefix. Empty prefixes are omitted from the
-	// rendered log line and do not occupy an empty "|" field.
-	SetPrefix(prefix string)
-
 	// Dir returns the directory used by FlagFile. An empty directory means the
 	// current working directory.
 	Dir() string
@@ -165,13 +158,13 @@ type logger struct {
 	mu          sync.Mutex
 	output      io.Writer
 	flags       int
-	prefix      string
 	dir         string
 	filePrefix  string
 	level       Level
 	callerLevel Level
 	callerFlags CallerFlag
-	fileDate    string
+	fileYear    int
+	fileDay     int
 	filePath    string
 	file        *os.File
 	times       map[uint32]time.Time
@@ -241,16 +234,6 @@ func Flags() int {
 // SetFlags replaces the output flags of the package-level default logger.
 func SetFlags(flag int) {
 	std.SetFlags(flag)
-}
-
-// Prefix returns the optional prefix of the package-level default logger.
-func Prefix() string {
-	return std.Prefix()
-}
-
-// SetPrefix changes the optional prefix of the package-level default logger.
-func SetPrefix(prefix string) {
-	std.SetPrefix(prefix)
 }
 
 // Dir returns the file output directory of the package-level default logger.
@@ -389,19 +372,6 @@ func (l *logger) SetFlags(flag int) {
 	l.mu.Unlock()
 }
 
-func (l *logger) Prefix() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	return l.prefix
-}
-
-func (l *logger) SetPrefix(prefix string) {
-	l.mu.Lock()
-	l.prefix = prefix
-	l.mu.Unlock()
-}
-
 func (l *logger) Dir() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -487,9 +457,6 @@ func (l *logger) formatLine(level Level, tag string, format string, msg ...any) 
 	callerFields := l.callerFields(level)
 
 	parts := []string{now, level.letter(), pid}
-	if l.prefix != "" {
-		parts = append(parts, l.prefix)
-	}
 	if tag != "" {
 		parts = append(parts, tag)
 	}
@@ -527,14 +494,15 @@ func (l *logger) callerFields(level Level) []string {
 }
 
 func (l *logger) openFileLocked(now time.Time) *os.File {
-	date := now.Format(dateLayout)
-	path := l.filePathForDate(date)
-	if l.file != nil && l.fileDate == date && l.filePath == path {
+	year, day := now.Year(), now.YearDay()
+	if l.file != nil && l.fileYear == year && l.fileDay == day {
 		return l.file
 	}
 
 	l.closeFileLocked()
 
+	date := now.Format(dateLayout)
+	path := l.filePathForDate(date)
 	if l.dir != "" {
 		if err := os.MkdirAll(l.dir, 0o755); err != nil {
 			return nil
@@ -547,7 +515,8 @@ func (l *logger) openFileLocked(now time.Time) *os.File {
 	}
 
 	l.file = file
-	l.fileDate = date
+	l.fileYear = year
+	l.fileDay = day
 	l.filePath = path
 	return file
 }
@@ -566,7 +535,8 @@ func (l *logger) closeFileLocked() {
 		_ = l.file.Close()
 		l.file = nil
 	}
-	l.fileDate = ""
+	l.fileYear = 0
+	l.fileDay = 0
 	l.filePath = ""
 }
 
